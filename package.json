@@ -1,0 +1,13 @@
+{
+  "name": "three-layer-web-app",
+  "version": "1.0.0",
+  "description": "Add New User Web Application with 3-Layer Architecture",
+  "scripts": {
+    "server": "npm --prefix server run dev",
+    "client": "npm --prefix client run dev",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "db:push": "npm --prefix server run prisma:push"
+  }
+}
+
