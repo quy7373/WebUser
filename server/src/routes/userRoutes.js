@@ -25,4 +25,10 @@ router.get('/users', userController.getUsers);
 // 6. Lấy danh sách lời mời đang chờ (Pending)
 router.get('/users/invitations', requireAdmin, userController.getInvitations);
 
+// 7. Hủy / Xóa lời mời đang chờ (DELETE /api/users/invitations/:id)
+router.delete('/users/invitations/:id', requireAdmin, userController.deleteInvitation);
+
+// 8. Quản trị viên xóa người dùng chính thức (DELETE /api/users/:id)
+router.delete('/users/:id', requireAdmin, userController.deleteUser);
+
 export default router;

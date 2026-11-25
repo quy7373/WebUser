@@ -17,15 +17,20 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Request logging đơn giản
+// Request logging & Server Instance header
 app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  res.setHeader('X-Server-Instance', process.env.SERVER_NAME || 'Node-App');
+  console.log(`[${new Date().toISOString()}][${process.env.SERVER_NAME || 'Node-App'}] ${req.method} ${req.url}`);
   next();
 });
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date() });
+  res.json({
+    status: 'ok',
+    serverInstance: process.env.SERVER_NAME || 'Node-App',
+    timestamp: new Date(),
+  });
 });
 
 // Đăng ký Business Routes

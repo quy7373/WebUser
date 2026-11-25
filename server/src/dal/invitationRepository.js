@@ -1,15 +1,16 @@
-import prisma from './prismaClient.js';
+import prisma, { prismaPrimary, prismaReplica } from './prismaClient.js';
 
 /**
  * Data Access Layer (DAL) - User Invitation Repository
  * Chỉ lưu trữ tokenHash (SHA-256), không bao giờ lưu token thô.
+ * Tách biệt Đọc (Replica) và Ghi (Primary).
  */
 class InvitationRepository {
   /**
-   * Tạo bản ghi lời mời mới
+   * Tạo bản ghi lời mời mới (Ghi vào Primary)
    */
-  async create(data) {
-    return await prisma.userInvitation.create({
+  async create(data, tx = prismaPrimary) {
+    return await tx.userInvitation.create({
       data: {
         email: data.email,
         name: data.name,
@@ -22,28 +23,28 @@ class InvitationRepository {
   }
 
   /**
-   * Tìm lời mời theo email
+   * Tìm lời mời theo email (Đọc từ Replica)
    */
   async findByEmail(email) {
-    return await prisma.userInvitation.findUnique({
+    return await prismaReplica.userInvitation.findUnique({
       where: { email },
     });
   }
 
   /**
-   * Tìm lời mời bằng mã băm tokenHash (SHA-256)
+   * Tìm lời mời bằng mã băm tokenHash (SHA-256) (Đọc từ Replica)
    */
   async findByTokenHash(tokenHash) {
-    return await prisma.userInvitation.findUnique({
+    return await prismaReplica.userInvitation.findUnique({
       where: { tokenHash },
     });
   }
 
   /**
-   * Cập nhật mã băm token mới và gia hạn thời gian (dùng khi resend invitation)
+   * Cập nhật mã băm token mới và gia hạn thời gian (dùng khi resend invitation) (Ghi vào Primary)
    */
-  async updateTokenAndExpiry(id, { tokenHash, expiresAt }) {
-    return await prisma.userInvitation.update({
+  async updateTokenAndExpiry(id, { tokenHash, expiresAt }, tx = prismaPrimary) {
+    return await tx.userInvitation.update({
       where: { id },
       data: {
         tokenHash,
@@ -54,9 +55,9 @@ class InvitationRepository {
   }
 
   /**
-   * Cập nhật trạng thái của lời mời (ACCEPTED, REVOKED, EXPIRED)
+   * Cập nhật trạng thái của lời mời (ACCEPTED, REVOKED, EXPIRED) (Ghi vào Primary)
    */
-  async updateStatus(id, status, tx = prisma) {
+  async updateStatus(id, status, tx = prismaPrimary) {
     return await tx.userInvitation.update({
       where: { id },
       data: { status },
@@ -64,10 +65,19 @@ class InvitationRepository {
   }
 
   /**
-   * Lấy danh sách tất cả lời mời đang PENDING
+   * Tìm lời mời theo ID (Đọc từ Replica)
+   */
+  async findById(id) {
+    return await prismaReplica.userInvitation.findUnique({
+      where: { id: parseInt(id, 10) },
+    });
+  }
+
+  /**
+   * Lấy danh sách tất cả lời mời đang PENDING (Đọc từ Replica)
    */
   async findAllPending() {
-    return await prisma.userInvitation.findMany({
+    return await prismaReplica.userInvitation.findMany({
       where: { status: 'PENDING' },
       orderBy: { createdAt: 'desc' },
       select: {
@@ -83,14 +93,22 @@ class InvitationRepository {
   }
 
   /**
-   * Xóa lời mời
+   * Xóa lời mời (Ghi vào Primary)
    */
-  async delete(id, tx = prisma) {
+  async delete(id, tx = prismaPrimary) {
     return await tx.userInvitation.delete({
-      where: { id },
+      where: { id: parseInt(id, 10) },
+    });
+  }
+
+  /**
+   * Xóa tất cả lời mời theo email (Ghi vào Primary)
+   */
+  async deleteByEmail(email, tx = prismaPrimary) {
+    return await tx.userInvitation.deleteMany({
+      where: { email },
     });
   }
 }
 
 export default new InvitationRepository();
-

@@ -89,14 +89,19 @@ class UserController {
 
   /**
    * GET /api/users
-   * Danh sách người dùng chính thức đã được lưu trong DB
+   * Danh sách người dùng chính thức đã được lưu trong DB (hỗ trợ tìm kiếm theo ?name=...&date=dd/mm/yy)
    */
   async getUsers(req, res, next) {
     try {
-      const users = await userService.getAllUsers();
+      const { name, date } = req.query;
+      const users = await userService.getAllUsers({ name, date });
       return res.status(200).json({
         success: true,
         data: users,
+        filters: {
+          name: name || null,
+          date: date || null,
+        },
       });
     } catch (error) {
       next(error);
@@ -113,6 +118,50 @@ class UserController {
       return res.status(200).json({
         success: true,
         data: invitations,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * DELETE /api/users/:id
+   * Quản trị viên xóa người dùng chính thức
+   */
+  async deleteUser(req, res, next) {
+    try {
+      const { id } = req.params;
+      const result = await userService.deleteUser({
+        id,
+        adminUser: req.adminUser,
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result.deletedUser,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * DELETE /api/users/invitations/:id
+   * Quản trị viên hủy / xóa lời mời đang chờ
+   */
+  async deleteInvitation(req, res, next) {
+    try {
+      const { id } = req.params;
+      const result = await userService.deleteInvitation({
+        id,
+        adminUser: req.adminUser,
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result.deletedInvitation,
       });
     } catch (error) {
       next(error);

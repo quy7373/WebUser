@@ -24,7 +24,7 @@ export const errorHandler = (err, req, res, next) => {
     });
   }
 
-  // Lỗi Prisma hoặc cú pháp không lường trước
+  // Lỗi trùng lặp dữ liệu (DB constraint violation)
   if (err.code === 'P2002') {
     return res.status(409).json({
       success: false,
@@ -32,9 +32,24 @@ export const errorHandler = (err, req, res, next) => {
     });
   }
 
+  // Phát hiện lỗi PostgreSQL Read-Only Transaction (khi kết nối vào Standby Replica chưa promote)
+  if (err.message && err.message.includes('cannot execute INSERT in a read-only transaction')) {
+    return res.status(503).json({
+      success: false,
+      message: 'Cơ sở dữ liệu đang ở chế độ Chỉ Đọc (Standby). Hệ thống tự động Failover đang đồng bộ, vui lòng thử lại sau vài giây.',
+    });
+  }
+
+  // Lỗi kết nối Database
+  if (err.name === 'PrismaClientInitializationError') {
+    return res.status(503).json({
+      success: false,
+      message: 'Không thể kết nối đến Cơ sở dữ liệu. Vui lòng kiểm tra trạng thái PostgreSQL.',
+    });
+  }
+
   return res.status(500).json({
     success: false,
-    message: 'Internal Server Error. Vui lòng thử lại sau.',
+    message: err.message || 'Internal Server Error. Vui lòng thử lại sau.',
   });
 };
-

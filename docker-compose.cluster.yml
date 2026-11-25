@@ -1,0 +1,207 @@
+services:
+  # =========================================================================
+  # 1. DATABASE TIER (2 DB Đồng Bộ Thời Gian Thực + Tự Động Failover)
+  # =========================================================================
+  db_primary:
+    image: postgres:16-alpine
+    container_name: db_primary
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_DB: adduser_db
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - primary_pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres/init-primary.sh:/docker-entrypoint-initdb.d/init-primary.sh:ro
+    command: postgres -c wal_level=replica -c max_wal_senders=10 -c max_replication_slots=10 -c hot_standby=on
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d adduser_db" ]
+      interval: 3s
+      timeout: 3s
+      retries: 3
+    networks:
+      - cluster_network
+
+  db_replica:
+    image: postgres:16-alpine
+    container_name: db_replica
+    restart: always
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - replica_pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres/start-replica.sh:/start-replica.sh:ro
+    entrypoint: [ "/bin/bash", "/start-replica.sh" ]
+    ports:
+      - "5433:5432"
+    depends_on:
+      db_primary:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d adduser_db" ]
+      interval: 3s
+      timeout: 3s
+      retries: 3
+    networks:
+      - cluster_network
+
+  # HAProxy đóng vai trò Virtual Gateway cho Database:
+  # Tự động trỏ sang DB2 nếu DB1 gặp sự cố mà không làm gián đoạn Backend
+  db_gateway:
+    image: haproxy:alpine
+    container_name: cluster_db_gateway
+    restart: always
+    volumes:
+      - ./deploy/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      db_primary:
+        condition: service_healthy
+      db_replica:
+        condition: service_healthy
+    networks:
+      - cluster_network
+
+  # Watchdog tự động kích hoạt (Promote) DB Replica thành Master khi phát hiện DB Primary sập
+  db_watchdog:
+    image: postgres:16-alpine
+    container_name: cluster_db_watchdog
+    restart: always
+    volumes:
+      - ./deploy/postgres/watchdog.sh:/watchdog.sh:ro
+    entrypoint: [ "/bin/bash", "/watchdog.sh" ]
+    depends_on:
+      db_primary:
+        condition: service_healthy
+      db_replica:
+        condition: service_healthy
+    networks:
+      - cluster_network
+
+  # =========================================================================
+  # 2. AUTO-MIGRATOR (Tự động tạo bảng User và UserInvitation khi mới khởi động)
+  # =========================================================================
+  db_migrator:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: cluster_db_migrator
+    restart: "no"
+    environment:
+      DATABASE_URL: "postgresql://postgres:postgrespassword@db_gateway:5432/adduser_db"
+    command: [ "npx", "prisma", "db", "push", "--skip-generate" ]
+    depends_on:
+      db_gateway:
+        condition: service_started
+    networks:
+      - cluster_network
+
+  # =========================================================================
+  # 3. APPLICATION TIER (3 Server Failover Nối Tầng: Sập 1 -> 2, sập 2 -> 3)
+  # =========================================================================
+  app_server_1:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: server_1
+    restart: always
+    environment:
+      PORT: 5001
+      SERVER_NAME: "App-Server-01 (Primary Server)"
+      DATABASE_URL: "postgresql://postgres:postgrespassword@db_gateway:5432/adduser_db"
+      CLIENT_URL: "http://localhost:8080"
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: 587
+      SMTP_USER: quylavip333@gmail.com
+      SMTP_PASS: "vtwe pwzb evox etby"
+      SMTP_FROM: "User Management System <quylavip333@gmail.com>"
+    depends_on:
+      db_migrator:
+        condition: service_completed_successfully
+    networks:
+      - cluster_network
+
+  app_server_2:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: server_2
+    restart: always
+    environment:
+      PORT: 5001
+      SERVER_NAME: "App-Server-02 (Backup 1)"
+      DATABASE_URL: "postgresql://postgres:postgrespassword@db_gateway:5432/adduser_db"
+      CLIENT_URL: "http://localhost:8080"
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: 587
+      SMTP_USER: quylavip333@gmail.com
+      SMTP_PASS: "vtwe pwzb evox etby"
+      SMTP_FROM: "User Management System <quylavip333@gmail.com>"
+    depends_on:
+      db_migrator:
+        condition: service_completed_successfully
+    networks:
+      - cluster_network
+
+  app_server_3:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: server_3
+    restart: always
+    environment:
+      PORT: 5001
+      SERVER_NAME: "App-Server-03 (Backup 2)"
+      DATABASE_URL: "postgresql://postgres:postgrespassword@db_gateway:5432/adduser_db"
+      CLIENT_URL: "http://localhost:8080"
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: 587
+      SMTP_USER: quylavip333@gmail.com
+      SMTP_PASS: "vtwe pwzb evox etby"
+      SMTP_FROM: "User Management System <quylavip333@gmail.com>"
+    depends_on:
+      db_migrator:
+        condition: service_completed_successfully
+    networks:
+      - cluster_network
+
+  # =========================================================================
+  # 4. PRESENTATION TIER (Frontend React UI)
+  # =========================================================================
+  frontend:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: cluster_frontend
+    restart: always
+    networks:
+      - cluster_network
+
+  # =========================================================================
+  # 5. LOAD BALANCER & FAILOVER GATEWAY (Nginx)
+  # =========================================================================
+  load_balancer:
+    image: nginx:alpine
+    container_name: cluster_load_balancer
+    restart: always
+    ports:
+      - "8080:80"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - app_server_1
+      - app_server_2
+      - app_server_3
+      - frontend
+    networks:
+      - cluster_network
+
+volumes:
+  primary_pgdata:
+  replica_pgdata:
+
+networks:
+  cluster_network:
+    driver: bridge

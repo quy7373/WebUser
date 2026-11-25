@@ -2,6 +2,7 @@ import userRepository from '../dal/userRepository.js';
 import invitationRepository from '../dal/invitationRepository.js';
 import emailService from './emailService.js';
 import { generateToken, hashToken, validatePasswordPolicy, hashPassword } from '../utils/security.js';
+import { parseDateDdMmYy } from '../utils/dateParser.js';
 import { BusinessError } from '../middlewares/errorHandler.js';
 
 /**
@@ -73,7 +74,7 @@ class UserService {
     }
 
     // 8. Tạo URL xác nhận trỏ tới /accept-invitation
-    const clientBaseUrl = process.env.CLIENT_URL || process.env.FRONTEND_URL || 'http://localhost:5174';
+    const clientBaseUrl = (process.env.CLIENT_URL || process.env.FRONTEND_URL || 'http://localhost:5174').replace(/\/+$/, '');
     const invitationUrl = `${clientBaseUrl}/accept-invitation?token=${rawToken}`;
 
     // 9. Gửi email thương hiệu CovAI
@@ -217,7 +218,7 @@ class UserService {
     });
 
     // 4. Gửi lại email mời mới
-    const clientBaseUrl = process.env.CLIENT_URL || process.env.FRONTEND_URL || 'http://localhost:5174';
+    const clientBaseUrl = (process.env.CLIENT_URL || process.env.FRONTEND_URL || 'http://localhost:5174').replace(/\/+$/, '');
     const invitationUrl = `${clientBaseUrl}/accept-invitation?token=${newRawToken}`;
 
     await emailService.sendCovAiInvitationEmail({
@@ -243,10 +244,90 @@ class UserService {
   }
 
   /**
-   * Lấy danh sách toàn bộ người dùng chính thức đã kích hoạt
+   * Lấy danh sách toàn bộ người dùng chính thức đã kích hoạt (hỗ trợ tìm kiếm theo tên và ngày tạo dd/mm/yy)
    */
-  async getAllUsers() {
-    return await userRepository.findAll();
+  async getAllUsers({ name, date } = {}) {
+    let dateFilter = null;
+    if (date && typeof date === 'string' && date.trim()) {
+      dateFilter = parseDateDdMmYy(date);
+    }
+
+    return await userRepository.findAll({
+      name: name && typeof name === 'string' && name.trim() ? name.trim() : undefined,
+      startDate: dateFilter?.startDate,
+      endDate: dateFilter?.endDate,
+    });
+  }
+
+  /**
+   * Quản trị viên xóa người dùng chính thức (DELETE /api/users/:id)
+   */
+  async deleteUser({ id, adminUser }) {
+    if (!adminUser || adminUser.role !== 'ADMIN') {
+      throw new BusinessError('Chỉ có quản trị viên mới có quyền xóa người dùng.', 403, 'FORBIDDEN');
+    }
+
+    const userId = parseInt(id, 10);
+    if (isNaN(userId)) {
+      throw new BusinessError('ID người dùng không hợp lệ.', 400, 'INVALID_USER_ID');
+    }
+
+    // 1. Kiểm tra người dùng có tồn tại không
+    const user = await userRepository.findById(userId);
+    if (!user) {
+      throw new BusinessError(`Không tìm thấy người dùng với ID #${userId}.`, 404, 'USER_NOT_FOUND');
+    }
+
+    // 2. Không cho phép admin tự xóa tài khoản của chính mình nếu cùng email
+    if (adminUser.email && user.email.toLowerCase() === adminUser.email.toLowerCase()) {
+      throw new BusinessError('Bạn không thể tự xóa tài khoản quản trị của chính mình.', 400, 'CANNOT_DELETE_SELF');
+    }
+
+    // 3. Thực hiện xóa trong Transaction và dọn dẹp các lời mời cũ liên quan
+    await userRepository.transaction(async (tx) => {
+      await userRepository.delete(userId, tx);
+      await invitationRepository.deleteByEmail(user.email, tx);
+    });
+
+    return {
+      message: `Đã xóa người dùng '${user.name}' (${user.email}) thành công.`,
+      deletedUser: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    };
+  }
+
+  /**
+   * Quản trị viên hủy / xóa lời mời đang chờ (DELETE /api/users/invitations/:id)
+   */
+  async deleteInvitation({ id, adminUser }) {
+    if (!adminUser || adminUser.role !== 'ADMIN') {
+      throw new BusinessError('Chỉ có quản trị viên mới có quyền xóa lời mời.', 403, 'FORBIDDEN');
+    }
+
+    const invitationId = parseInt(id, 10);
+    if (isNaN(invitationId)) {
+      throw new BusinessError('ID lời mời không hợp lệ.', 400, 'INVALID_INVITATION_ID');
+    }
+
+    const invitation = await invitationRepository.findById(invitationId);
+    if (!invitation) {
+      throw new BusinessError(`Không tìm thấy lời mời với ID #${invitationId}.`, 404, 'INVITATION_NOT_FOUND');
+    }
+
+    await invitationRepository.delete(invitationId);
+
+    return {
+      message: `Đã hủy lời mời đến ${invitation.email} thành công.`,
+      deletedInvitation: {
+        id: invitation.id,
+        email: invitation.email,
+        name: invitation.name,
+      },
+    };
   }
 }
 

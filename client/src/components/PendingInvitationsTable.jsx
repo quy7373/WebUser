@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Mail, Clock, RefreshCw, Send, CheckCircle2, AlertCircle } from 'lucide-react';
-import { resendInvitationApi } from '../services/api';
+import { Mail, Clock, RefreshCw, Send, CheckCircle2, AlertCircle, Trash2 } from 'lucide-react';
+import { resendInvitationApi, deleteInvitationApi } from '../services/api';
 
 export default function PendingInvitationsTable({ invitations, onRefresh }) {
   const [resendingEmail, setResendingEmail] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
   const [cooldowns, setCooldowns] = useState({}); // { [email]: secondsLeft }
   const [resendStatus, setResendStatus] = useState(null); // { type, message }
 
@@ -43,6 +44,31 @@ export default function PendingInvitationsTable({ invitations, onRefresh }) {
       });
     } finally {
       setResendingEmail(null);
+    }
+  };
+
+  const handleDeleteInvitation = async (id, email) => {
+    if (!window.confirm(`Bạn có chắc chắn muốn hủy lời mời gửi đến "${email}"?`)) {
+      return;
+    }
+
+    setDeletingId(id);
+    setResendStatus(null);
+
+    try {
+      const result = await deleteInvitationApi(id);
+      setResendStatus({
+        type: 'success',
+        message: result.message || `Đã hủy lời mời gửi đến ${email}.`,
+      });
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      setResendStatus({
+        type: 'error',
+        message: err.message || 'Lỗi khi hủy lời mời.',
+      });
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -128,10 +154,10 @@ export default function PendingInvitationsTable({ invitations, onRefresh }) {
                     <td style={{ color: '#64748b', fontSize: '0.8rem' }}>
                       {formatDate(inv.expiresAt)}
                     </td>
-                    <td>
+                    <td style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <button
                         onClick={() => handleResend(inv.email)}
-                        disabled={isProcessing || cooldown > 0}
+                        disabled={isProcessing || cooldown > 0 || deletingId === inv.id}
                         style={{
                           display: 'inline-flex',
                           alignItems: 'center',
@@ -159,6 +185,16 @@ export default function PendingInvitationsTable({ invitations, onRefresh }) {
                             <Send size={12} /> Gửi lại (Resend)
                           </>
                         )}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="btn-action-delete"
+                        title={`Hủy lời mời gửi đến ${inv.email}`}
+                        disabled={deletingId === inv.id}
+                        onClick={() => handleDeleteInvitation(inv.id, inv.email)}
+                      >
+                        <Trash2 size={15} />
                       </button>
                     </td>
                   </tr>

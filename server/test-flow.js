@@ -197,6 +197,61 @@ async function runTests() {
     console.log('Note: Resend rate limit status:', resend2.status);
   }
 
+  // 9. Test Delete User
+  console.log('\n--- TEST 9: Admin Deletes Activated User ---');
+  const deleteRes = await fetch(`${API}/users/${acceptData.data.id}`, {
+    method: 'DELETE',
+    headers: adminHeaders,
+  });
+  const deleteData = await deleteRes.json();
+  console.log('Delete status:', deleteRes.status);
+  console.log('Delete response:', deleteData.message);
+  if (deleteRes.status === 200 && deleteData.success) {
+    console.log('✅ PASSED: User was successfully deleted by admin.');
+  } else {
+    throw new Error('FAILED: Delete user failed.');
+  }
+
+  // Verify user is no longer in users list
+  const usersListRes = await fetch(`${API}/users`);
+  const usersListData = await usersListRes.json();
+  const foundUser = usersListData.data.find(u => u.id === acceptData.data.id);
+  if (!foundUser) {
+    console.log('✅ PASSED: User is confirmed removed from database.');
+  } else {
+    throw new Error('FAILED: User still exists in users list after deletion.');
+  }
+
+  // 10. Test Search Users by Name and Date (dd/mm/yy)
+  console.log('\n--- TEST 10: Search Users by Name and Date dd/mm/yy ---');
+
+  // Search by Date (dd/mm/yy)
+  const today = new Date();
+  const dd = String(today.getDate()).padStart(2, '0');
+  const mm = String(today.getMonth() + 1).padStart(2, '0');
+  const yy = String(today.getFullYear()).slice(-2);
+  const dateStr = `${dd}/${mm}/${yy}`;
+
+  const searchDateRes = await fetch(`${API}/users?date=${dateStr}`);
+  const searchDateData = await searchDateRes.json();
+  console.log(`Search by date (${dateStr}) status:`, searchDateRes.status);
+  console.log(`Found users count on ${dateStr}:`, searchDateData.data?.length);
+  if (searchDateRes.status === 200 && Array.isArray(searchDateData.data)) {
+    console.log('✅ PASSED: Search by date dd/mm/yy returned valid results.');
+  } else {
+    throw new Error('FAILED: Search by date failed.');
+  }
+
+  // Search by Invalid Date format (Expect 400)
+  const invalidDateRes = await fetch(`${API}/users?date=99/99/99`);
+  const invalidDateData = await invalidDateRes.json();
+  console.log('Search with invalid date status:', invalidDateRes.status);
+  if (invalidDateRes.status === 400) {
+    console.log('✅ PASSED: Invalid date format correctly returned 400:', invalidDateData.message);
+  } else {
+    throw new Error('FAILED: Invalid date was not rejected with 400.');
+  }
+
   console.log('\n================ ALL TEST SCENARIOS PASSED SUCCESSFULLY ================');
 }
 
